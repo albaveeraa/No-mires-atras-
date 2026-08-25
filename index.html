@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>NO MIRES ATRÁS — Night Run</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#050608;font-family:Arial,sans-serif}
+body{touch-action:none}.wrap{position:relative;width:100%;height:100%;background:#050608}
+canvas{display:block;width:100%;height:100%}
+#hud{position:absolute;top:0;left:0;right:0;padding:14px 14px 0;display:flex;justify-content:space-between;color:white;text-shadow:0 2px 5px #000;font-weight:800;pointer-events:none}
+.box{background:rgba(0,0,0,.42);border:1px solid rgba(255,255,255,.18);border-radius:14px;padding:8px 12px;backdrop-filter:blur(5px)}
+#menu{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%,rgba(35,45,55,.18),rgba(0,0,0,.84));color:white;text-align:center}
+.panel{width:min(90%,430px);padding:28px;border-radius:24px;background:rgba(5,7,10,.78);border:1px solid rgba(255,255,255,.16);box-shadow:0 25px 80px #000}
+h1{font-size:34px;margin:0 0 8px;letter-spacing:3px}p{opacity:.85;line-height:1.4}
+button{border:0;border-radius:14px;padding:14px 22px;margin:7px;font-size:17px;font-weight:800;background:#e8edf2;color:#111}
+button.dark{background:#252b31;color:white;border:1px solid #59616a}
+#shop{display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:rgba(0,0,0,.78);color:#fff}
+.cards{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}.card{width:110px;padding:10px;border:1px solid #4b5259;border-radius:15px;background:#111820}.card b{display:block;margin:6px}.mini{height:100px;border-radius:10px;background:linear-gradient(#252b32,#090b0e);position:relative;overflow:hidden}
+.tip{position:absolute;bottom:12px;left:0;right:0;text-align:center;color:#fff;opacity:.7;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<canvas id="game"></canvas>
+<div id="hud">
+  <div class="box">🪙 <span id="coins">0</span></div>
+  <div class="box">❤️ <span id="lives">3</span> &nbsp; <span id="dist">0</span> m</div>
+</div>
+<div id="menu">
+ <div class="panel">
+  <h1>NO MIRES ATRÁS</h1>
+  <p>Corre. No mires atrás.<br>Algo te está siguiendo.</p>
+  <button id="start">EMPEZAR</button>
+  <button id="shopBtn" class="dark">PERSONAJES</button>
+  <p style="font-size:13px">Móvil: desliza izquierda/derecha para cambiar de carril · desliza arriba para saltar</p>
+ </div>
+</div>
+<div id="shop">
+ <div class="panel">
+  <h2>PERSONAJES</h2>
+  <p>Monedas: <b id="shopCoins">0</b></p>
+  <div class="cards" id="cards"></div>
+  <button class="dark" id="closeShop">VOLVER</button>
+ </div>
+</div>
+<div class="tip">Si oyes pasos detrás… sigue corriendo.</div>
+</div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+let W,H,dpr,playing=false,last=0,time=0,score=0,coins=0,lives=3,speed=0.42,lane=1,targetLane=1,jump=0;
+let objects=[],rain=[],selected=0;
+const chars=[
+ {name:"Alex",cost:0,shirt:"#b9c2c8",pants:"#252a30"},
+ {name:"Noche",cost:60,shirt:"#1d2530",pants:"#11151a"},
+ {name:"Rojo",cost:140,shirt:"#6d2025",pants:"#181b20"},
+ {name:"Sombra",cost:260,shirt:"#080a0d",pants:"#030405"}
+];
+function resize(){dpr=devicePixelRatio||1;W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);rain=[];for(let i=0;i<100;i++)rain.push({x:Math.random()*W,y:Math.random()*H,l:8+Math.random()*22,s:250+Math.random()*400})}
+addEventListener('resize',resize);resize();
+
+function roadY(z){return H*.63 + z*H*.43}
+function roadHalf(z){return W*.07 + z*W*.48}
+function laneX(l,z){let center=W/2, gap=roadHalf(z)*.52;return center+(l-1)*gap}
+function spawn(){
+ let type=Math.random()<.58?"coin":"obstacle";
+ objects.push({type,lane:Math.floor(Math.random()*3),z:0.02,hit:false,spin:Math.random()*6});
+}
+function reset(){
+objects=[];score=0;coins=0;lives=3;speed=.42;lane=1;targetLane=1;jump=0;playing=true;menu.style.display="none";time=0;last=performance.now();requestAnimationFrame(loop);
+}
+function drawBackground(){
+ let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#060a0f");g.addColorStop(.48,"#101820");g.addColorStop(1,"#050607");ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ // moon haze
+ let rg=ctx.createRadialGradient(W*.76,H*.18,4,W*.76,H*.18,W*.25);rg.addColorStop(0,"rgba(170,190,205,.12)");rg.addColorStop(1,"transparent");ctx.fillStyle=rg;ctx.fillRect(0,0,W,H);
+ // buildings
+ for(let side=-1;side<=1;side+=2){
+  for(let i=0;i<9;i++){
+   let x=side<0?i*W*.105-W*.03:W-i*W*.105;
+   let bw=W*(.07+((i*17)%4)*.015), bh=H*(.15+((i*23)%5)*.035);
+   ctx.fillStyle=i%2?"#0b1015":"#0d141a";ctx.fillRect(x,H*.58-bh,bw,bh);
+   ctx.fillStyle="rgba(210,190,120,.12)";
+   for(let yy=H*.58-bh+14;yy<H*.56;yy+=18)for(let xx=x+10;xx<x+bw-6;xx+=17)if(((xx+yy+i)%3)<1)ctx.fillRect(xx,yy,5,7);
+  }
+ }
+ // street
+ ctx.beginPath();ctx.moveTo(W*.44,H*.58);ctx.lineTo(W*.56,H*.58);ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();let rg2=ctx.createLinearGradient(0,H*.55,0,H);rg2.addColorStop(0,"#161a1d");rg2.addColorStop(1,"#07090b");ctx.fillStyle=rg2;ctx.fill();
+ // sidewalks
+ ctx.fillStyle="#25282a";ctx.beginPath();ctx.moveTo(W*.42,H*.58);ctx.lineTo(W*.58,H*.58);ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.lineTo(W*.42,H*.58);ctx.closePath(); // overwritten by road below
+ ctx.beginPath();ctx.moveTo(W*.42,H*.58);ctx.lineTo(W*.58,H*.58);ctx.lineTo(W*.94,H);ctx.lineTo(W*.06,H);ctx.closePath();ctx.fillStyle="#111416";ctx.fill();
+ // road again
+ ctx.beginPath();ctx.moveTo(W*.46,H*.58);ctx.lineTo(W*.54,H*.58);ctx.lineTo(W*.92,H);ctx.lineTo(W*.08,H);ctx.closePath();ctx.fillStyle="#090b0d";ctx.fill();
+ // lane markings
+ for(let z=.08;z<1;z+=.13){let y=roadY(z),x=W/2,half=roadHalf(z);ctx.strokeStyle="rgba(190,190,185,.28)";ctx.lineWidth=Math.max(1,z*3);ctx.beginPath();ctx.moveTo(x-half*.18,y);ctx.lineTo(x-half*.03,y);ctx.stroke();ctx.beginPath();ctx.moveTo(x+half*.03,y);ctx.lineTo(x+half*.18,y);ctx.stroke();}
+ // lamps
+ for(let side of [-1,1]){let x=W/2+side*W*.35;ctx.strokeStyle="#171b1e";ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(x,H*.48);ctx.lineTo(x-side*25,H*.72);ctx.stroke();ctx.fillStyle="rgba(230,220,180,.16)";ctx.beginPath();ctx.arc(x-side*4,H*.48,16,0,Math.PI*2);ctx.fill();}
+}
+function drawRain(dt){ctx.strokeStyle="rgba(180,205,220,.14)";ctx.lineWidth=1;for(let r of rain){r.y+=r.s*dt/1000;r.x-=r.s*.12*dt/1000;if(r.y>H){r.y=-20;r.x=Math.random()*W}ctx.beginPath();ctx.moveTo(r.x,r.y);ctx.lineTo(r.x-4,r.y+r.l);ctx.stroke()}}
+function drawPlayer(){
+ let x=laneX(lane,.95),base=H*.87-jump*H*.22, s=Math.min(W,H)/430;
+ // shadow
+ ctx.fillStyle="rgba(0,0,0,.5)";ctx.beginPath();ctx.ellipse(x, H*.9, 28*s,8*s,0,0,Math.PI*2);ctx.fill();
+ ctx.save();ctx.translate(x,base);
+ let ch=chars[selected],run=Math.sin(time*.018)*.22;
+ // legs
+ ctx.strokeStyle=ch.pants;ctx.lineWidth=12*s;ctx.lineCap="round";
+ ctx.beginPath();ctx.moveTo(-7*s,18*s);ctx.lineTo((-14+run*20)*s,48*s);ctx.stroke();
+ ctx.beginPath();ctx.moveTo(7*s,18*s);ctx.lineTo((14-run*20)*s,48*s);ctx.stroke();
+ // body
+ ctx.fillStyle=ch.shirt;ctx.beginPath();ctx.roundRect(-19*s,-38*s,38*s,58*s,12*s);ctx.fill();
+ // arms
+ ctx.strokeStyle=ch.shirt;ctx.lineWidth=10*s;ctx.beginPath();ctx.moveTo(-16*s,-26*s);ctx.lineTo((-30-run*18)*s,8*s);ctx.stroke();ctx.beginPath();ctx.moveTo(16*s,-26*s);ctx.lineTo((30+run*18)*s,4*s);ctx.stroke();
+ // head
+ ctx.fillStyle="#b98267";ctx.beginPath();ctx.arc(0,-54*s,15*s,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#15110f";ctx.beginPath();ctx.arc(0,-59*s,15*s,Math.PI,Math.PI*2);ctx.fill();
+ ctx.restore();
+}
+function drawObject(o){
+ let z=Math.min(1,Math.max(.01,o.z)),x=laneX(o.lane,z),y=roadY(z),scale=.25+z*1.5;
+ if(o.type==="coin"){ctx.save();ctx.translate(x,y-20*scale);ctx.rotate(time*.006+o.spin);ctx.fillStyle="#d6b84e";ctx.strokeStyle="#fff0a0";ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,10*scale,14*scale,0,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle="rgba(255,255,255,.55)";ctx.fillRect(-2*scale,-9*scale,3*scale,9*scale);ctx.restore()}
+ else {ctx.save();ctx.translate(x,y-24*scale);ctx.fillStyle="#3a3030";ctx.strokeStyle="#8d4b4b";ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(-22*scale,-15*scale,44*scale,30*scale,5*scale);ctx.fill();ctx.stroke();ctx.fillStyle="rgba(230,210,190,.16)";ctx.fillRect(-15*scale,-9*scale,30*scale,5*scale);ctx.restore()}
+}
+function loop(now){
+ if(!playing)return;let dt=Math.min(40,now-last);last=now;time+=dt;score+=dt*.012*speed;speed=Math.min(1.05,speed+dt*.000004);
+ if(Math.random()<dt/850*speed)spawn();
+ for(let o of objects)o.z+=dt*.00035*speed;
+ for(let i=objects.length-1;i>=0;i--){let o=objects[i];if(o.z>.9&&!o.hit){if(o.lane===lane && (o.type==="coin" || jump<.22)){if(o.type==="coin"){coins++;o.hit=true;objects.splice(i,1);continue}else{lives--;o.hit=true;if(lives<=0){playing=false;menu.style.display="flex";menu.querySelector("p").innerHTML=`Has conseguido <b>${Math.floor(coins)} monedas</b> y recorrido <b>${Math.floor(score)} m</b>.`;}}} }if(o.z>1.08)objects.splice(i,1)}
+ drawBackground();drawRain(dt);objects.forEach(drawObject);drawPlayer();
+ document.getElementById("coins").textContent=coins;document.getElementById("lives").textContent=lives;document.getElementById("dist").textContent=Math.floor(score);
+ jump=Math.max(0,jump-dt*.0018);requestAnimationFrame(loop);
+}
+function move(dir){targetLane=Math.max(0,Math.min(2,targetLane+dir));lane=targetLane}
+let sx=0,sy=0;
+addEventListener("touchstart",e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});
+addEventListener("touchend",e=>{let dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>35)move(dx>0?1:-1);else if(dy<-35)jump=1},{passive:true});
+addEventListener("keydown",e=>{if(e.key==="ArrowLeft"||e.key==="a")move(-1);if(e.key==="ArrowRight"||e.key==="d")move(1);if(e.key==="ArrowUp"||e.key===" ")jump=1});
+document.getElementById("start").onclick=reset;
+document.getElementById("shopBtn").onclick=()=>{menu.style.display="none";shop.style.display="flex";renderShop()};
+document.getElementById("closeShop").onclick=()=>{shop.style.display="none";menu.style.display="flex"};
+function renderShop(){shopCoins.textContent=coins;cards.innerHTML="";chars.forEach((ch,i)=>{let el=document.createElement("div");el.className="card";el.innerHTML=`<div class="mini"><div style="width:28px;height:28px;border-radius:50%;background:#b98267;position:absolute;left:41px;top:18px"></div><div style="width:46px;height:55px;border-radius:13px;background:${ch.shirt};position:absolute;left:32px;top:45px"></div></div><b>${ch.name}</b><small>${ch.cost===0?"GRATIS":ch.cost+" 🪙"}</small><br><button>${selected===i?"ELEGIDO":"ELEGIR"}</button>`;el.querySelector("button").onclick=()=>{if(ch.cost===0||coins>=ch.cost){selected=i;renderShop()}};cards.appendChild(el)})}
+</script>
+</body>
+</html>
